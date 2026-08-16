@@ -1,0 +1,282 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+<title>Neko Dash - Fickle Runner</title>
+<style>
+  * { box-sizing: border-box; touch-action: manipulation; user-select: none; }
+  body {
+    margin: 0;
+    padding: 0;
+    background: #1a1a2e;
+    color: #fff;
+    font-family: sans-serif;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    min-height: 100vh;
+    overflow: hidden;
+  }
+  #game-container {
+    position: relative;
+    width: 360px;
+    height: 600px;
+    border: 3px solid #ff9f43;
+    border-radius: 16px;
+    overflow: hidden;
+    background: #0f172a;
+    box-shadow: 0 10px 30px rgba(0,0,0,0.6);
+  }
+  canvas { display: block; width: 100%; height: 100%; }
+  #ui-overlay {
+    position: absolute;
+    top: 10px;
+    left: 10px;
+    right: 10px;
+    display: flex;
+    justify-content: space-between;
+    font-weight: bold;
+    text-shadow: 1px 1px 3px #000;
+  }
+  .controls {
+    display: flex;
+    gap: 12px;
+    margin-top: 12px;
+  }
+  .btn {
+    width: 70px;
+    height: 60px;
+    background: #ff9f43;
+    border: none;
+    border-radius: 12px;
+    font-size: 24px;
+    font-weight: bold;
+    color: #fff;
+    box-shadow: 0 4px #c26913;
+    cursor: pointer;
+  }
+  .btn:active {
+    transform: translateY(4px);
+    box-shadow: none;
+  }
+  .btn-boost { background: #ee5253; box-shadow: 0 4px #b33939; }
+</style>
+</head>
+<body>
+
+<div id="game-container">
+  <div id="ui-overlay">
+    <span id="scoreDisplay">SCORE: 0m</span>
+    <span id="stateDisplay" style="color: #4cd137;">FOCUS OK</span>
+  </div>
+  <canvas id="gameCanvas" width="360" height="600"></canvas>
+</div>
+
+<!-- スマホ操作用ボタン（PCは矢印キーとSpaceでも操作可能） -->
+<div class="controls">
+  <button class="btn" id="btnLeft">◀</button>
+  <button class="btn btn-boost" id="btnBoost">⚡</button>
+  <button class="btn" id="btnRight">▶</button>
+</div>
+
+<script>
+const canvas = document.getElementById('gameCanvas');
+const ctx = canvas.getContext('2d');
+
+const lanes = [60, 180, 300];
+let currentLane = 1;
+let catX = lanes[1];
+let catY = 480;
+
+let speed = 4;
+let distance = 0;
+let isFickle = false; // 気まぐれ発動（ゴロン/よそ見状態）
+let fickleTimer = 0;
+let boostTimer = 0;
+
+let obstacles = [];
+let items = [];
+
+// 障害物・アイテム定義
+const OBSTACLE_TYPES = [
+  { type: 'wand', label: '🪶', name: '猫じゃらし (よそ見)' },
+  { type: 'box',  label: '📦', name: '段ボール (吸い込まれる)' }
+];
+const ITEM_TYPES = [
+  { type: 'catnip', label: '🌿', name: 'マタタビ (暴走ダッシュ)' },
+  { type: 'can',    label: '🥫', name: '高級缶詰 (気合回復)' }
+];
+
+function spawnEntities() {
+  if (Math.random() < 0.03) {
+    const lane = Math.floor(Math.random() * 3);
+    const isItem = Math.random() < 0.35;
+    if (isItem) {
+      const item = ITEM_TYPES[Math.floor(Math.random() * ITEM_TYPES.length)];
+      items.push({ x: lanes[lane], y: -40, ...item });
+    } else {
+      const obs = OBSTACLE_TYPES[Math.floor(Math.random() * OBSTACLE_TYPES.length)];
+      obstacles.push({ x: lanes[lane], y: -40, ...obs });
+    }
+  }
+}
+
+function update() {
+  // 気まぐれ状態のカウントダウン
+  if (isFickle) {
+    fickleTimer--;
+    if (fickleTimer <= 0) {
+      isFickle = false;
+      document.getElementById('stateDisplay').innerText = "FOCUS OK";
+      document.getElementById('stateDisplay').style.color = "#4cd137";
+    }
+  }
+
+  // ブースト状態のカウントダウン
+  let currentSpeed = speed;
+  if (boostTimer > 0) {
+    boostTimer--;
+    currentSpeed = speed * 1.8;
+  }
+
+  if (!isFickle) {
+    distance += Math.floor(currentSpeed);
+  }
+
+  document.getElementById('scoreDisplay').innerText = `SCORE: ${distance}m`;
+
+  // スムーズなレーン移動
+  catX += (lanes[currentLane] - catX) * 0.2;
+
+  // 障害物移動 & 当たり判定
+  for (let i = obstacles.length - 1; i >= 0; i--) {
+    let o = obstacles[i];
+    o.y += currentSpeed;
+    
+    // 接触判定
+    if (Math.abs(o.x - catX) < 40 && Math.abs(o.y - catY) < 40) {
+      triggerFickle(o.type === 'box' ? "段ボールにすっぽり！💤" : "おもちゃに夢中！🐾");
+      obstacles.splice(i, 1);
+      continue;
+    }
+    if (o.y > 650) obstacles.splice(i, 1);
+  }
+
+  // アイテム移動 & 当たり判定
+  for (let i = items.length - 1; i >= 0; i--) {
+    let item = items[i];
+    item.y += currentSpeed;
+    
+    if (Math.abs(item.x - catX) < 40 && Math.abs(item.y - catY) < 40) {
+      if (item.type === 'catnip') {
+        boostTimer = 120; // 2秒間ズーミーズ（爆走）
+        isFickle = false;
+      }
+      items.splice(i, 1);
+      continue;
+    }
+    if (item.y > 650) items.splice(i, 1);
+  }
+
+  spawnEntities();
+}
+
+function triggerFickle(reason) {
+  isFickle = true;
+  fickleTimer = 90; // 約1.5秒停止
+  boostTimer = 0;
+  const stateEl = document.getElementById('stateDisplay');
+  stateEl.innerText = reason;
+  stateEl.style.color = "#ff4757";
+}
+
+function draw() {
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+  // 背景（スクロールするコースグリッド）
+  ctx.strokeStyle = '#2f3542';
+  ctx.lineWidth = 2;
+  let offset = (distance * 2) % 60;
+  for (let y = offset; y < 600; y += 60) {
+    ctx.beginPath();
+    ctx.moveTo(0, y);
+    ctx.lineTo(360, y);
+    ctx.stroke();
+  }
+
+  // レーン境界線
+  ctx.strokeStyle = '#57606f';
+  ctx.setLineDash([10, 10]);
+  ctx.beginPath();
+  ctx.moveTo(120, 0); ctx.lineTo(120, 600);
+  ctx.moveTo(240, 0); ctx.lineTo(240, 600);
+  ctx.stroke();
+  ctx.setLineDash([]);
+
+  // 障害物描画
+  ctx.font = '36px sans-serif';
+  ctx.textAlign = 'center';
+  obstacles.forEach(o => {
+    ctx.fillText(o.label, o.x, o.y);
+  });
+
+  // アイテム描画
+  items.forEach(it => {
+    ctx.fillText(it.label, it.x, it.y);
+  });
+
+  // 猫キャラクター描画
+  ctx.save();
+  ctx.translate(catX, catY);
+  
+  if (isFickle) {
+    // 横になってゴロンとしている状態
+    ctx.font = '40px sans-serif';
+    ctx.fillText('🛌', 0, 0);
+    ctx.font = '16px sans-serif';
+    ctx.fillText('Zzz...', 20, -20);
+  } else if (boostTimer > 0) {
+    // ズーミーズ爆走中
+    ctx.font = '44px sans-serif';
+    ctx.fillText('🐈💨', 0, 0);
+  } else {
+    // 通常ランニング
+    ctx.font = '40px sans-serif';
+    ctx.fillText('🐱', 0, 0);
+  }
+  ctx.restore();
+}
+
+function gameLoop() {
+  update();
+  draw();
+  requestAnimationFrame(gameLoop);
+}
+
+// 操作系統
+function moveLeft() {
+  if (!isFickle && currentLane > 0) currentLane--;
+}
+function moveRight() {
+  if (!isFickle && currentLane < 2) currentLane++;
+}
+function tryBoost() {
+  if (!isFickle && boostTimer === 0) boostTimer = 40;
+}
+
+window.addEventListener('keydown', (e) => {
+  if (e.key === 'ArrowLeft' || e.key === 'a') moveLeft();
+  if (e.key === 'ArrowRight' || e.key === 'd') moveRight();
+  if (e.key === ' ' || e.key === 'ArrowUp') tryBoost();
+});
+
+document.getElementById('btnLeft').addEventListener('pointerdown', moveLeft);
+document.getElementById('btnRight').addEventListener('pointerdown', moveRight);
+document.getElementById('btnBoost').addEventListener('pointerdown', tryBoost);
+
+gameLoop();
+</script>
+</body>
+</html>
